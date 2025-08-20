@@ -9,14 +9,22 @@ const messaeSchema = new mongoose.Schema(
         },
         receiverId:{
             type: mongoose.Schema.Types.ObjectId,
-            ref: "User",
-            required: true
+            ref: "User"
+        },
+        groupId:{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Group"
         },
         text:{
             type: String
         },
         image:{
             type: String
+        },
+        messageType: {
+            type: String,
+            enum: ['direct', 'group'],
+            default: 'direct'
         }
     },
     {timestamps: true}
