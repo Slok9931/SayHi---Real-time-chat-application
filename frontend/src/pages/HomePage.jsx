@@ -1,14 +1,29 @@
+import { useEffect } from "react";
 import { useChatStore } from "../store/useChatStore";
 import { useGroupStore } from "../store/useGroupStore";
+import { useCallStore } from "../store/useCallStore";
+import { useAuthStore } from "../store/useAuthStore";
 
 import Sidebar from "../components/Sidebar";
 import NoChatSelected from "../components/NoChatSelected";
 import ChatContainer from "../components/ChatContainer";
 import GroupChatContainer from "../components/GroupChatContainer";
+import CallInterface from "../components/CallInterface";
+import IncomingCall from "../components/IncomingCall";
 
 const HomePage = () => {
   const { selectedUser } = useChatStore();
   const { selectedGroup } = useGroupStore();
+  const { subscribeToCallEvents, unsubscribeFromCallEvents } = useCallStore();
+  const { socket } = useAuthStore();
+
+  useEffect(() => {
+    // Only subscribe to call events when socket is available
+    if (socket) {
+      subscribeToCallEvents();
+      return () => unsubscribeFromCallEvents();
+    }
+  }, [socket, subscribeToCallEvents, unsubscribeFromCallEvents]);
 
   const renderChatContent = () => {
     if (selectedUser) {
@@ -30,6 +45,10 @@ const HomePage = () => {
           </div>
         </div>
       </div>
+
+      {/* Call Components */}
+      <CallInterface />
+      <IncomingCall />
     </div>
   );
 };

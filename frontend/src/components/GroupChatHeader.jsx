@@ -1,11 +1,37 @@
-import { X, Users, Settings } from "lucide-react";
+import { X, Users, Settings, Phone, Video } from "lucide-react";
 import { useGroupStore } from "../store/useGroupStore";
+import { useCallStore } from "../store/useCallStore";
 import { useState } from "react";
 import GroupInfoModal from "./GroupInfoModal";
 
 const GroupChatHeader = () => {
   const { selectedGroup, setSelectedGroup } = useGroupStore();
+  const { initiateCall, isInitiatingCall } = useCallStore();
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+
+  const handleVoiceCall = async () => {
+    try {
+      await initiateCall({
+        groupId: selectedGroup._id,
+        callType: 'voice',
+        chatType: 'group'
+      });
+    } catch (error) {
+      // Error handled in store
+    }
+  };
+
+  const handleVideoCall = async () => {
+    try {
+      await initiateCall({
+        groupId: selectedGroup._id,
+        callType: 'video',
+        chatType: 'group'
+      });
+    } catch (error) {
+      // Error handled in store
+    }
+  };
 
   return (
     <>
@@ -35,6 +61,24 @@ const GroupChatHeader = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Voice call button */}
+            <button 
+              onClick={handleVoiceCall}
+              disabled={isInitiatingCall}
+              className="btn btn-sm btn-ghost"
+            >
+              <Phone className="w-4 h-4" />
+            </button>
+
+            {/* Video call button */}
+            <button 
+              onClick={handleVideoCall}
+              disabled={isInitiatingCall}
+              className="btn btn-sm btn-ghost"
+            >
+              <Video className="w-4 h-4" />
+            </button>
+
             {/* Group info button */}
             <button 
               onClick={() => setShowGroupInfo(true)}

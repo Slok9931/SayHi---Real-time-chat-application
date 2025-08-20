@@ -1,10 +1,36 @@
-import { X } from "lucide-react";
+import { X, Phone, Video } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
+import { useCallStore } from "../store/useCallStore";
 
 const ChatHeader = () => {
   const { selectedUser, setSelectedUser } = useChatStore();
   const { onlineUsers } = useAuthStore();
+  const { initiateCall, isInitiatingCall } = useCallStore();
+
+  const handleVoiceCall = async () => {
+    try {
+      await initiateCall({
+        receiverId: selectedUser._id,
+        callType: 'voice',
+        chatType: 'direct'
+      });
+    } catch (error) {
+      // Error handled in store
+    }
+  };
+
+  const handleVideoCall = async () => {
+    try {
+      await initiateCall({
+        receiverId: selectedUser._id,
+        callType: 'video',
+        chatType: 'direct'
+      });
+    } catch (error) {
+      // Error handled in store
+    }
+  };
 
   return (
     <div className="p-2.5 border-b border-base-300">
@@ -26,12 +52,34 @@ const ChatHeader = () => {
           </div>
         </div>
 
-        {/* Close button */}
-        <button onClick={() => setSelectedUser(null)}>
-          <X />
-        </button>
+        {/* Action buttons */}
+        <div className="flex items-center gap-2">
+          {/* Voice call button */}
+          <button 
+            onClick={handleVoiceCall}
+            disabled={isInitiatingCall}
+            className="btn btn-sm btn-ghost"
+          >
+            <Phone className="w-4 h-4" />
+          </button>
+
+          {/* Video call button */}
+          <button 
+            onClick={handleVideoCall}
+            disabled={isInitiatingCall}
+            className="btn btn-sm btn-ghost"
+          >
+            <Video className="w-4 h-4" />
+          </button>
+
+          {/* Close button */}
+          <button onClick={() => setSelectedUser(null)}>
+            <X />
+          </button>
+        </div>
       </div>
     </div>
   );
 };
+
 export default ChatHeader;
