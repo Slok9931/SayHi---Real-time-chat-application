@@ -47,7 +47,6 @@ export const createGroup = async (req, res) => {
 
     res.status(201).json(populatedGroup);
   } catch (error) {
-    console.log("Error in createGroup controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -66,7 +65,6 @@ export const getUserGroups = async (req, res) => {
 
     res.status(200).json(groups);
   } catch (error) {
-    console.log("Error in getUserGroups controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -91,7 +89,6 @@ export const getGroupMessages = async (req, res) => {
 
     res.status(200).json(messages);
   } catch (error) {
-    console.log("Error in getGroupMessages controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -137,7 +134,6 @@ export const sendGroupMessage = async (req, res) => {
 
     res.status(201).json(newMessage);
   } catch (error) {
-    console.log("Error in sendGroupMessage controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -180,7 +176,6 @@ export const addMemberToGroup = async (req, res) => {
 
     res.status(200).json(updatedGroup);
   } catch (error) {
-    console.log("Error in addMemberToGroup controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -224,7 +219,6 @@ export const removeMemberFromGroup = async (req, res) => {
 
     res.status(200).json(updatedGroup);
   } catch (error) {
-    console.log("Error in removeMemberFromGroup controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -273,7 +267,6 @@ export const updateGroup = async (req, res) => {
 
     res.status(200).json(updatedGroup);
   } catch (error) {
-    console.log("Error in updateGroup controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };

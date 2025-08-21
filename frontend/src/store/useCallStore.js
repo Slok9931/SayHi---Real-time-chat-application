@@ -22,24 +22,53 @@ export const useCallStore = create((set, get) => ({
   isInitiatingCall: false,
   isLoadingHistory: false,
 
-  // WebRTC Configuration
+  // ICE candidate buffering
+  iceCandidateBuffers: {},
+
+  // WebRTC Configuration - Enhanced with more STUN/TURN servers
   rtcConfig: {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
-    ]
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+      // Multiple TURN servers for better connectivity
+      { 
+        urls: "turn:openrelay.metered.ca:80",
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443",
+        username: "openrelayproject", 
+        credential: "openrelayproject"
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443?transport=tcp",
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ],
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
   },
 
   initiateCall: async (callData) => {
     set({ isInitiatingCall: true });
     try {
       const res = await axiosInstance.post("/calls/initiate", callData);
-      set({ currentCall: res.data, isCallActive: true });
+      const call = res.data;
       
-      // Start local media
+      set({ currentCall: call, isCallActive: true });
+      
+      // Start local media first
       await get().startLocalMedia(callData.callType);
       
-      return res.data;
+      // Don't make offer immediately for caller - wait for answerer to be ready
+      
+      return call;
     } catch (error) {
       toast.error(error.response?.data?.error || "Failed to initiate call");
       throw error;
@@ -54,6 +83,7 @@ export const useCallStore = create((set, get) => ({
       
       if (answer) {
         const call = get().incomingCall || res.data;
+        
         set({ 
           currentCall: call, 
           isCallActive: true, 
@@ -63,6 +93,13 @@ export const useCallStore = create((set, get) => ({
         
         // Start local media for answered call
         await get().startLocalMedia(call.callType);
+        
+        // Small delay then signal readiness
+        setTimeout(() => {
+          const socket = useAuthStore.getState().socket;
+          socket.emit("call-ready", callId);
+        }, 1000);
+        
       } else {
         set({ incomingCall: null, isIncomingCall: false });
       }
@@ -85,18 +122,34 @@ export const useCallStore = create((set, get) => ({
 
   startLocalMedia: async (callType) => {
     try {
+      
       const constraints = {
-        video: callType === 'video',
-        audio: true
+        video: callType === 'video' ? {
+          width: { min: 640, ideal: 1280 },
+          height: { min: 480, ideal: 720 },
+          frameRate: { ideal: 30 }
+        } : false,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 44100
+        }
       };
       
+      
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      set({ localStream: stream });
+      
+      set({ 
+        localStream: stream,
+        isVideoEnabled: callType === 'video',
+        isAudioEnabled: true
+      });
       
       return stream;
     } catch (error) {
       console.error("Error accessing media devices:", error);
-      toast.error("Failed to access camera/microphone");
+      toast.error("Failed to access camera/microphone: " + error.message);
       throw error;
     }
   },
@@ -125,53 +178,52 @@ export const useCallStore = create((set, get) => ({
 
   createPeerConnection: (userId) => {
     const { rtcConfig, localStream } = get();
+    
     const pc = new RTCPeerConnection(rtcConfig);
     
     // Add local stream tracks
     if (localStream) {
-      localStream.getTracks().forEach(track => {
+      localStream.getTracks().forEach((track, index) => {
         pc.addTrack(track, localStream);
       });
     }
     
     // Handle remote stream
     pc.ontrack = (event) => {
-      console.log("Remote track received:", event.streams[0]);
+      
       const remoteStream = event.streams[0];
-      set((state) => ({
-        remoteStreams: {
-          ...state.remoteStreams,
-          [userId]: remoteStream
-        }
-      }));
+      
+      if (remoteStream) {
+        set((state) => ({
+          remoteStreams: {
+            ...state.remoteStreams,
+            [userId]: remoteStream
+          }
+        }));
+      }
     };
     
     // Handle ICE candidates
     const socket = useAuthStore.getState().socket;
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log("Sending ICE candidate");
         const { currentCall } = get();
-        if (currentCall?.chatType === 'direct') {
-          socket.emit("ice-candidate", event.candidate, userId, currentCall.callId);
-        } else if (currentCall?.chatType === 'group') {
-          const targetUserIds = currentCall?.participants
-            ?.map(p => p.userId._id || p.userId)
-            ?.filter(id => id !== useAuthStore.getState().authUser._id) || [];
-          if (targetUserIds.length > 0) {
-            socket.emit("group-ice-candidate", event.candidate, targetUserIds, currentCall.callId);
-          }
-        }
+        socket.emit("ice-candidate", event.candidate, userId, currentCall.callId);
       }
     };
 
-    // Handle connection state changes
-    pc.onconnectionstatechange = () => {
-      console.log("Connection state:", pc.connectionState);
-    };
-
     pc.oniceconnectionstatechange = () => {
-      console.log("ICE connection state:", pc.iceConnectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      } else if (pc.iceConnectionState === 'failed') {
+        pc.restartIce();
+      } else if (pc.iceConnectionState === 'disconnected') {
+        // Give it some time to reconnect before restarting
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected') {
+            pc.restartIce();
+          }
+        }, 5000);
+      }
     };
     
     set((state) => ({
@@ -186,39 +238,40 @@ export const useCallStore = create((set, get) => ({
 
   handleOffer: async (offer, senderId, callId) => {
     try {
-      console.log("Handling offer from:", senderId);
+      
+      const { localStream } = get();
+      if (!localStream) {
+        console.error("❌ No local stream available when handling offer");
+        return;
+      }
+      
       const pc = get().createPeerConnection(senderId);
       
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
+      const answer = await pc.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
       await pc.setLocalDescription(answer);
       
       const socket = useAuthStore.getState().socket;
-      const { currentCall } = get();
+      socket.emit("answer", answer, senderId, callId);
       
-      if (currentCall?.chatType === 'direct') {
-        socket.emit("answer", answer, senderId, callId);
-      } else if (currentCall?.chatType === 'group') {
-        const targetUserIds = currentCall?.participants
-          ?.map(p => p.userId._id || p.userId)
-          ?.filter(id => id !== useAuthStore.getState().authUser._id) || [];
-        if (targetUserIds.length > 0) {
-          socket.emit("group-answer", answer, targetUserIds, callId);
-        }
-      }
     } catch (error) {
-      console.error("Error handling offer:", error);
+      console.error("❌ Error handling offer:", error);
     }
   },
 
   handleAnswer: async (answer, senderId) => {
     try {
-      console.log("Handling answer from:", senderId);
       const { peerConnections } = get();
       const pc = peerConnections[senderId];
       
-      if (pc) {
+      if (pc && pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      } else {
+        console.warn("Cannot set remote description - invalid state:", pc?.signalingState);
       }
     } catch (error) {
       console.error("Error handling answer:", error);
@@ -227,12 +280,34 @@ export const useCallStore = create((set, get) => ({
 
   handleIceCandidate: async (candidate, senderId) => {
     try {
-      console.log("Handling ICE candidate from:", senderId);
-      const { peerConnections } = get();
+      const { peerConnections, iceCandidateBuffers } = get();
       const pc = peerConnections[senderId];
       
       if (pc && pc.remoteDescription) {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        
+        // Process any buffered candidates
+        if (iceCandidateBuffers[senderId] && iceCandidateBuffers[senderId].length > 0) {
+          for (const bufferedCandidate of iceCandidateBuffers[senderId]) {
+            await pc.addIceCandidate(new RTCIceCandidate(bufferedCandidate));
+          }
+          // Clear buffer
+          set(state => ({
+            iceCandidateBuffers: {
+              ...state.iceCandidateBuffers,
+              [senderId]: []
+            }
+          }));
+        }
+      } else {
+        console.warn("Buffering ICE candidate - no remote description yet");
+        // Buffer the candidate
+        set(state => ({
+          iceCandidateBuffers: {
+            ...state.iceCandidateBuffers,
+            [senderId]: [...(state.iceCandidateBuffers[senderId] || []), candidate]
+          }
+        }));
       }
     } catch (error) {
       console.error("Error handling ICE candidate:", error);
@@ -241,26 +316,43 @@ export const useCallStore = create((set, get) => ({
 
   makeOffer: async (targetUserId) => {
     try {
-      console.log("Making offer to:", targetUserId);
+      
+      const { localStream } = get();
+      if (!localStream) {
+        console.error("❌ No local stream available when making offer");
+        return;
+      }
+      
       const pc = get().createPeerConnection(targetUserId);
-      const offer = await pc.createOffer();
+      
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
+      
       await pc.setLocalDescription(offer);
       
       const socket = useAuthStore.getState().socket;
       const { currentCall } = get();
+      socket.emit("offer", offer, targetUserId, currentCall.callId);
       
-      if (currentCall?.chatType === 'direct') {
-        socket.emit("offer", offer, targetUserId, currentCall.callId);
-      } else if (currentCall?.chatType === 'group') {
-        const targetUserIds = currentCall?.participants
-          ?.map(p => p.userId._id || p.userId)
-          ?.filter(id => id !== useAuthStore.getState().authUser._id) || [];
-        if (targetUserIds.length > 0) {
-          socket.emit("group-offer", offer, targetUserIds, currentCall.callId);
-        }
-      }
     } catch (error) {
-      console.error("Error making offer:", error);
+      console.error("❌ Error making offer:", error);
+    }
+  },
+
+  startCall: () => {
+    const { currentCall } = get();
+    const authUser = useAuthStore.getState().authUser;
+    
+    if (currentCall && currentCall.chatType === 'direct') {
+      const otherParticipant = currentCall.participants.find(
+        p => p.userId._id !== authUser._id
+      );
+      
+      if (otherParticipant) {
+        get().makeOffer(otherParticipant.userId._id);
+      }
     }
   },
 
@@ -269,11 +361,15 @@ export const useCallStore = create((set, get) => ({
     
     // Stop local stream
     if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+      localStream.getTracks().forEach(track => {
+        track.stop();
+      });
     }
     
     // Close peer connections
-    Object.values(peerConnections).forEach(pc => pc.close());
+    Object.entries(peerConnections).forEach(([userId, pc]) => {
+      pc.close();
+    });
     
     set({
       currentCall: null,
@@ -283,6 +379,7 @@ export const useCallStore = create((set, get) => ({
       localStream: null,
       remoteStreams: {},
       peerConnections: {},
+      iceCandidateBuffers: {},
       isVideoEnabled: true,
       isAudioEnabled: true
     });
@@ -296,47 +393,28 @@ export const useCallStore = create((set, get) => ({
     const socket = useAuthStore.getState().socket;
     if (!socket) return;
     
+    
     socket.on("incoming-call", (call) => {
-      console.log("Incoming call:", call);
       get().setIncomingCall(call);
     });
     
-    socket.on("call-answered", ({ answer, userId, callId }) => {
-      console.log("Call answered:", { answer, userId, callId });
+    socket.on("call-ready", (callId) => {
+      get().startCall();
     });
     
     socket.on("call-ended", ({ callId, userId }) => {
-      console.log("Call ended:", { callId, userId });
       get().cleanup();
     });
     
     socket.on("offer", (offer, senderId, callId) => {
-      console.log("Received offer:", { senderId, callId });
       get().handleOffer(offer, senderId, callId);
     });
     
     socket.on("answer", (answer, senderId, callId) => {
-      console.log("Received answer:", { senderId, callId });
       get().handleAnswer(answer, senderId);
     });
     
     socket.on("ice-candidate", (candidate, senderId, callId) => {
-      console.log("Received ICE candidate:", { senderId, callId });
-      get().handleIceCandidate(candidate, senderId);
-    });
-    
-    socket.on("group-offer", (offer, senderId, callId) => {
-      console.log("Received group offer:", { senderId, callId });
-      get().handleOffer(offer, senderId, callId);
-    });
-    
-    socket.on("group-answer", (answer, senderId, callId) => {
-      console.log("Received group answer:", { senderId, callId });
-      get().handleAnswer(answer, senderId);
-    });
-    
-    socket.on("group-ice-candidate", (candidate, senderId, callId) => {
-      console.log("Received group ICE candidate:", { senderId, callId });
       get().handleIceCandidate(candidate, senderId);
     });
   },
@@ -347,12 +425,10 @@ export const useCallStore = create((set, get) => ({
     
     socket.off("incoming-call");
     socket.off("call-answered");
+    socket.off("call-ready");
     socket.off("call-ended");
     socket.off("offer");
     socket.off("answer");
     socket.off("ice-candidate");
-    socket.off("group-offer");
-    socket.off("group-answer");
-    socket.off("group-ice-candidate");
   }
 }));

@@ -28,65 +28,119 @@ const CallInterface = () => {
   
   const { authUser } = useAuthStore();
   const localVideoRef = useRef(null);
+  const localAudioRef = useRef(null);
   const remoteVideoRefs = useRef({});
+  const remoteAudioRefs = useRef({});
+  const playPromisesRef = useRef({}); // Track play promises
   const [isMinimized, setIsMinimized] = useState(false);
 
-  // Set up local video
+  // Declare these variables BEFORE useEffects
+  const remoteStreamEntries = Object.entries(remoteStreams);
+  const hasRemoteVideo = remoteStreamEntries.length > 0;
+
+  const activeParticipants = currentCall?.participants?.filter(
+    p => p.status === 'joined'
+  ) || [];
+
+  // Helper function to safely play video/audio
+  const safePlay = async (element, elementType, userId = 'local') => {
+    if (!element || !element.srcObject) return;
+    
+    const key = `${elementType}-${userId}`;
+    
+    // If there's already a play promise, wait for it
+    if (playPromisesRef.current[key]) {
+      await playPromisesRef.current[key];
+    }
+    
+    // Start new play promise
+    playPromisesRef.current[key] = element.play();
+    
+    try {
+      await playPromisesRef.current[key];
+    } catch (error) {} finally {
+      playPromisesRef.current[key] = null;
+    }
+  };
+
+  // Set up local video and audio
   useEffect(() => {
-    if (localStream && localVideoRef.current) {
-      localVideoRef.current.srcObject = localStream;
-      console.log("Local stream set:", localStream);
+    if (localStream) {
+      
+      // Set up local video
+      if (localVideoRef.current && localVideoRef.current.srcObject !== localStream) {
+        localVideoRef.current.srcObject = localStream;
+        safePlay(localVideoRef.current, 'video', 'local');
+      }
+      
+      // Set up local audio for monitoring (muted to prevent feedback)
+      if (localAudioRef.current && localAudioRef.current.srcObject !== localStream) {
+        localAudioRef.current.srcObject = localStream;
+        localAudioRef.current.muted = true; // Always muted to prevent feedback
+        safePlay(localAudioRef.current, 'audio', 'local');
+      }
     }
   }, [localStream]);
 
-  // Set up remote videos with better error handling
+  // Set up remote videos and audio - FIXED VERSION
   useEffect(() => {
-    console.log("Remote streams updated:", remoteStreams);
+    
     Object.entries(remoteStreams).forEach(([userId, stream]) => {
-      if (remoteVideoRefs.current[userId] && stream) {
-        remoteVideoRefs.current[userId].srcObject = stream;
-        console.log(`Remote stream set for user ${userId}:`, stream);
+      if (stream) {
         
-        // Force video to play
+        // Set up remote video - only if not already set
         const videoElement = remoteVideoRefs.current[userId];
-        videoElement.play().catch(e => console.log("Video play error:", e));
+        if (videoElement && videoElement.srcObject !== stream) {
+          videoElement.srcObject = stream;
+          safePlay(videoElement, 'video', userId);
+        }
+        
+        // Set up remote audio - only if not already set
+        const audioElement = remoteAudioRefs.current[userId];
+        if (audioElement && audioElement.srcObject !== stream) {
+          audioElement.srcObject = stream;
+          safePlay(audioElement, 'audio', userId);
+        }
       }
     });
   }, [remoteStreams]);
 
-  // Initialize WebRTC when call becomes active
+  // Force play all media elements when remote streams change
   useEffect(() => {
-    if (isCallActive && currentCall && localStream) {
-      console.log("Initializing WebRTC for call:", currentCall);
+    const playAllMedia = async () => {
+      // Play local video
+      if (localVideoRef.current && localStream) {
+        await safePlay(localVideoRef.current, 'video', 'local');
+      }
       
-      // Small delay to ensure streams are ready
-      setTimeout(() => {
-        if (currentCall.chatType === 'direct') {
-          const otherParticipant = currentCall.participants.find(
-            p => p.userId._id !== authUser._id
-          );
-          if (otherParticipant && currentCall.caller._id === authUser._id) {
-            console.log("Making offer to:", otherParticipant.userId._id);
-            makeOffer(otherParticipant.userId._id);
-          }
-        } else {
-          const otherParticipants = currentCall.participants.filter(
-            p => p.userId._id !== authUser._id && p.status === 'joined'
-          );
-          otherParticipants.forEach(participant => {
-            if (currentCall.caller._id === authUser._id) {
-              console.log("Making group offer to:", participant.userId._id);
-              makeOffer(participant.userId._id);
-            }
-          });
+      // Play all remote videos and audio
+      for (const [userId, stream] of Object.entries(remoteStreams)) {
+        const videoElement = remoteVideoRefs.current[userId];
+        const audioElement = remoteAudioRefs.current[userId];
+        
+        if (videoElement && stream) {
+          await safePlay(videoElement, 'video', userId);
         }
-      }, 1000);
+        if (audioElement && stream) {
+          await safePlay(audioElement, 'audio', userId);
+        }
+      }
+    };
+
+    if (hasRemoteVideo) {
+      playAllMedia();
     }
-  }, [isCallActive, currentCall, localStream, authUser._id, makeOffer]);
+  }, [hasRemoteVideo, remoteStreams, localStream]);
 
   if (!isCallActive || !currentCall) return null;
 
   const handleEndCall = () => {
+    // Cancel any pending play promises
+    Object.keys(playPromisesRef.current).forEach(key => {
+      if (playPromisesRef.current[key]) {
+        playPromisesRef.current[key] = null;
+      }
+    });
     endCall(currentCall.callId);
   };
 
@@ -101,15 +155,40 @@ const CallInterface = () => {
     }
   };
 
-  const activeParticipants = currentCall.participants.filter(
-    p => p.status === 'joined'
-  );
-
-  const remoteStreamEntries = Object.entries(remoteStreams);
-  const hasRemoteVideo = remoteStreamEntries.length > 0;
+  // Add click handler for manual video play
+  const handleVideoClick = async (userId) => {
+    const videoElement = remoteVideoRefs.current[userId];
+    if (videoElement) {
+      await safePlay(videoElement, 'video', userId);
+    }
+  };
 
   return (
     <div className={`fixed inset-0 bg-black z-50 flex flex-col ${isMinimized ? 'bottom-4 right-4 w-80 h-60' : ''}`}>
+      {/* Hidden audio elements for remote streams */}
+      {remoteStreamEntries.map(([userId]) => (
+        <audio
+          key={`audio-${userId}`}
+          ref={el => {
+            if (el) {
+              remoteAudioRefs.current[userId] = el;
+            }
+          }}
+          autoPlay={false} // We'll control play manually
+          playsInline
+          style={{ display: 'none' }}
+        />
+      ))}
+      
+      {/* Hidden local audio for monitoring */}
+      <audio
+        ref={localAudioRef}
+        autoPlay={false} // We'll control play manually
+        muted
+        playsInline
+        style={{ display: 'none' }}
+      />
+
       {/* Header */}
       <div className="bg-gray-900 p-4 flex items-center justify-between text-white">
         <div>
@@ -140,7 +219,7 @@ const CallInterface = () => {
                 <div className="relative bg-gray-800 rounded-lg overflow-hidden">
                   <video
                     ref={localVideoRef}
-                    autoPlay
+                    autoPlay={false} // We'll control play manually
                     muted
                     playsInline
                     className="w-full h-full object-cover"
@@ -148,6 +227,11 @@ const CallInterface = () => {
                   <div className="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
                     You {!isVideoEnabled && "(Video Off)"}
                   </div>
+                  {!isVideoEnabled && (
+                    <div className="absolute inset-0 bg-gray-600 flex items-center justify-center">
+                      <VideoOff className="w-12 h-12 text-white" />
+                    </div>
+                  )}
                 </div>
                 
                 {/* Remote videos */}
@@ -159,18 +243,25 @@ const CallInterface = () => {
                         ref={el => {
                           if (el) {
                             remoteVideoRefs.current[userId] = el;
-                            if (stream) {
-                              el.srcObject = stream;
-                              el.play().catch(e => console.log("Video play error:", e));
-                            }
+                            // Don't set srcObject or play here - let useEffect handle it
                           }
                         }}
-                        autoPlay
+                        autoPlay={false} // We'll control play manually
                         playsInline
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={() => handleVideoClick(userId)} // Add click handler
                       />
                       <div className="absolute bottom-2 left-2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
                         {participant?.userId.fullName || 'Unknown'}
+                      </div>
+                      {/* Add overlay if video might not be playing */}
+                      <div className="absolute top-2 right-2">
+                        <button
+                          onClick={() => handleVideoClick(userId)}
+                          className="bg-black bg-opacity-50 p-1 rounded text-white text-xs hover:bg-opacity-75"
+                        >
+                          ▶
+                        </button>
                       </div>
                     </div>
                   );
@@ -199,18 +290,25 @@ const CallInterface = () => {
                           ref={el => {
                             if (el) {
                               remoteVideoRefs.current[userId] = el;
-                              if (stream) {
-                                el.srcObject = stream;
-                                el.play().catch(e => console.log("Video play error:", e));
-                              }
+                              // Don't set srcObject or play here - let useEffect handle it
                             }
                           }}
-                          autoPlay
+                          autoPlay={false} // We'll control play manually
                           playsInline
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-cover cursor-pointer"
+                          onClick={() => handleVideoClick(userId)} // Add click handler
                         />
                         <div className="absolute top-4 left-4 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
                           {participant?.userId.fullName || 'Remote User'}
+                        </div>
+                        {/* Add play button overlay */}
+                        <div className="absolute top-4 right-4">
+                          <button
+                            onClick={() => handleVideoClick(userId)}
+                            className="bg-black bg-opacity-50 p-2 rounded-full text-white hover:bg-opacity-75"
+                          >
+                            <Video className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     );
@@ -230,7 +328,7 @@ const CallInterface = () => {
                 <div className="absolute top-4 right-4 w-32 h-24 bg-gray-800 rounded-lg overflow-hidden border-2 border-white">
                   <video
                     ref={localVideoRef}
-                    autoPlay
+                    autoPlay={false} // We'll control play manually
                     muted
                     playsInline
                     className="w-full h-full object-cover"

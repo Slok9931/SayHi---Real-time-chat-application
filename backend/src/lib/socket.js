@@ -19,17 +19,12 @@ export function getReceiverSocketId(userId) {
 }
 
 io.on("connection", (socket) => {
-  console.log("a user connected", socket.id);
-
   const userId = socket.handshake.query.userId;
   if (userId != "undefined") userSocketMap[userId] = socket.id;
 
-  // Send the list of online users to all connected clients
   io.emit("getOnlineUsers", Object.keys(userSocketMap));
 
-  // WebRTC signaling for direct calls
   socket.on("offer", (offer, targetUserId, callId) => {
-    console.log("Offer received:", { from: userId, to: targetUserId, callId });
     const targetSocketId = getReceiverSocketId(targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit("offer", offer, userId, callId);
@@ -37,7 +32,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("answer", (answer, targetUserId, callId) => {
-    console.log("Answer received:", { from: userId, to: targetUserId, callId });
     const targetSocketId = getReceiverSocketId(targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit("answer", answer, userId, callId);
@@ -45,7 +39,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("ice-candidate", (candidate, targetUserId, callId) => {
-    console.log("ICE candidate received:", { from: userId, to: targetUserId, callId });
     const targetSocketId = getReceiverSocketId(targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit("ice-candidate", candidate, userId, callId);
@@ -54,7 +47,6 @@ io.on("connection", (socket) => {
 
   // Group call signaling
   socket.on("group-offer", (offer, targetUserIds, callId) => {
-    console.log("Group offer received:", { from: userId, targetUserIds, callId });
     if (targetUserIds && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
       targetUserIds.forEach(targetUserId => {
         if (targetUserId && targetUserId !== userId) {
@@ -68,7 +60,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("group-answer", (answer, targetUserIds, callId) => {
-    console.log("Group answer received:", { from: userId, targetUserIds, callId });
     if (targetUserIds && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
       targetUserIds.forEach(targetUserId => {
         if (targetUserId && targetUserId !== userId) {
@@ -82,7 +73,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("group-ice-candidate", (candidate, targetUserIds, callId) => {
-    console.log("Group ICE candidate received:", { from: userId, targetUserIds, callId });
     if (targetUserIds && Array.isArray(targetUserIds) && targetUserIds.length > 0) {
       targetUserIds.forEach(targetUserId => {
         if (targetUserId && targetUserId !== userId) {
@@ -95,8 +85,12 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Add this new event handler
+  socket.on("call-ready", (callId) => {
+    socket.broadcast.emit("call-ready", callId);
+  });
+
   socket.on("disconnect", () => {
-    console.log("user disconnected", socket.id);
     delete userSocketMap[userId];
     io.emit("getOnlineUsers", Object.keys(userSocketMap));
   });

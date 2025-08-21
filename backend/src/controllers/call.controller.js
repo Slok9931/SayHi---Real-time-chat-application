@@ -75,7 +75,6 @@ export const initiateCall = async (req, res) => {
 
     res.status(201).json(populatedCall);
   } catch (error) {
-    console.log("Error in initiateCall controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -135,7 +134,6 @@ export const answerCall = async (req, res) => {
 
     res.status(200).json(populatedCall);
   } catch (error) {
-    console.log("Error in answerCall controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -183,7 +181,6 @@ export const endCall = async (req, res) => {
 
     res.status(200).json({ message: "Call ended successfully" });
   } catch (error) {
-    console.log("Error in endCall controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -206,7 +203,6 @@ export const getUserCalls = async (req, res) => {
 
     res.status(200).json(calls);
   } catch (error) {
-    console.log("Error in getUserCalls controller: ", error.message);
     res.status(500).json({ error: "Internal server error" });
   }
 };
